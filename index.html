@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en" class=""><head><script>window.livecodes = window.livecodes || {};</script><title>Stitching orders time set </title><meta name="title" content="Stitching orders time set "><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0"><link rel="stylesheet" href="./style.css"><script src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.js" async=""></script><script type="importmap">{
+  "imports": {}
+}</script></head><body>
+
+
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Set Order Completion Times</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/9.15.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.15.0/firebase-database-compat.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f1f5f9;
+        }
+        .table-container {
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        thead th {
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+    </style>
+
+
+
+    <div class="max-w-6xl mx-auto bg-white p-6 rounded-lg shadow-lg">
+        <header class="flex justify-between items-center mb-6">
+            <div>
+                <h1 class="text-3xl font-bold text-slate-800">Set Order Times</h1>
+                <p class="text-slate-500">Set estimated completion date and time for pending stitching orders.</p>
+            </div>
+            <a href="Admin.html" class="text-sm font-semibold text-indigo-600 hover:text-indigo-800">← Back to Admin Panel</a>
+        </header>
+        
+        <div class="table-container border rounded-lg">
+            <table class="w-full">
+                <thead class="bg-slate-100">
+                    <tr class="border-b-2 border-slate-200">
+                        <th class="p-3 text-left text-sm font-semibold text-slate-600">Order #</th>
+                        <th class="p-3 text-left text-sm font-semibold text-slate-600">Customer</th>
+                        <th class="p-3 text-left text-sm font-semibold text-slate-600">Current ETA</th>
+                        <th class="p-3 text-left text-sm font-semibold text-slate-600">Set Completion Time</th>
+                        <th class="p-3 text-left text-sm font-semibold text-slate-600">Action</th>
+                    </tr>
+                </thead>
+                <tbody id="orders-tbody">
+                    <tr><td colspan="5" class="text-center p-8 text-gray-500">Loading pending orders...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="hidden fixed bottom-5 right-5 bg-gray-900 text-white py-2 px-4 rounded-lg shadow-lg"></div>
+
+    <script>
+        const firebaseConfig = {
+            apiKey: "AIzaSyC0_DQIiyaVQllFH4pxH1Dm3r2kFXXoOgc",
+            authDomain: "navrosetailorapp.firebaseapp.com",
+            databaseURL: "https://navrosetailorapp-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "navrosetailorapp"
+        };
+        
+        let db;
+
+        function showToast(message) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.classList.remove('hidden');
+            setTimeout(() => toast.classList.add('hidden'), 3000);
+        }
+
+        async function fetchAndRenderOrders() {
+            const tbody = document.getElementById('orders-tbody');
+            tbody.innerHTML = `<tr><td colspan="5" class="text-center p-8 text-gray-500">Loading...</td></tr>`;
+
+            const customersSnap = await db.ref('customers').once('value');
+            const ordersSnap = await db.ref('orders').once('value');
+
+            const customers = customersSnap.val() || {};
+            const orders = ordersSnap.val() || {};
+
+            const pendingStitchingOrders = Object.entries(orders)
+                .map(([key, value]) => ({ id: key, ...value }))
+                .filter(o => o.status && o.status.toLowerCase() !== 'completed');
+
+            if (pendingStitchingOrders.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="5" class="text-center p-8 text-gray-500">No pending stitching orders found.</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = pendingStitchingOrders
+                .sort((a, b) => (a.orderNumber || 0) - (b.orderNumber || 0))
+                .map(order => {
+                    const customer = Object.values(customers).find(c => c.mobile === order.customerMobile);
+                    const customerName = customer ? customer.name : 'Unknown';
+                    const currentETA = order.estimatedCompletionTimestamp 
+                        ? new Date(order.estimatedCompletionTimestamp).toLocaleString()
+                        : 'Not set';
+
+                    // Format for datetime-local input: YYYY-MM-DDTHH:mm
+                    const now = new Date();
+                    const defaultValue = new Date(now.getTime() - (now.getTimezoneOffset() * 60000)).toISOString().slice(0, 16);
+
+                    return `
+                    <tr class="border-b hover:bg-slate-50">
+                        <td class="p-3 font-mono font-semibold">#${order.orderNumber}</td>
+                        <td class="p-3 font-medium">${customerName} (${order.customerMobile})</td>
+                        <td class="p-3 text-sm font-semibold ${order.estimatedCompletionTimestamp ? 'text-green-600' : 'text-gray-500'}">${currentETA}</td>
+                        <td class="p-3">
+                            <input type="datetime-local" id="time-input-${order.id}" class="rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 text-sm" value="${defaultValue}">
+                        </td>
+                        <td class="p-3">
+                             <button onclick="saveTime('${order.id}')" class="bg-indigo-600 text-white font-bold py-1 px-4 rounded-md hover:bg-indigo-700 text-sm">Save</button>
+                        </td>
+                    </tr>
+                `}).join('');
+        }
+
+        async function saveTime(orderId) {
+            const timeInput = document.getElementById(`time-input-${orderId}`);
+            const selectedDateTime = timeInput.value;
+
+            if (!selectedDateTime) {
+                showToast("Please select a valid date and time.");
+                return;
+            }
+
+            const timestamp = new Date(selectedDateTime).getTime();
+
+            try {
+                await db.ref(`orders/${orderId}`).update({
+                    estimatedCompletionTimestamp: timestamp
+                });
+                showToast(`Completion time saved for order #${orderId.slice(-4)}.`);
+                fetchAndRenderOrders(); // Refresh the list to show the new ETA
+            } catch (error) {
+                showToast("Failed to save time. Please try again.");
+                console.error("Error saving time:", error);
+            }
+        }
+        window.saveTime = saveTime;
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            try {
+                if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+                db = firebase.database();
+                await fetchAndRenderOrders();
+            } catch (e) {
+                console.error(e);
+                document.getElementById('orders-tbody').innerHTML = `<tr><td colspan="5" class="text-center p-8 text-red-500">Failed to load data. Check Firebase connection.</td></tr>`;
+                alert("Firebase connection failed.");
+            }
+        });
+    </script>
+
+
+
+<script src="./script.js"></script></body></html>

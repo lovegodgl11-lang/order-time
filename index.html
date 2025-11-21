@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" class=""><head><script>window.livecodes = window.livecodes || {};</script><title>Stitching orders time set </title><meta name="title" content="Stitching orders time set "><meta charset="UTF-8">
+<html lang="en" class=""><head><script>window.livecodes = window.livecodes || {};</script><title>Time system </title><meta name="title" content="Time system "><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0"><link rel="stylesheet" href="./style.css"><script src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.js" async=""></script><script type="importmap">{
   "imports": {}
 }</script></head><body>
@@ -26,32 +26,53 @@
             top: 0;
             z-index: 10;
         }
+        .timer-display {
+            font-family: monospace;
+            font-weight: bold;
+            color: #4f46e5;
+        }
+        .task-input {
+            background-color: transparent;
+            border: none;
+            border-bottom: 2px solid transparent;
+            padding: 4px;
+            width: 100%;
+            transition: border-color 0.2s ease-in-out;
+        }
+        .task-input:focus {
+            outline: none;
+            border-bottom-color: #4f46e5;
+        }
     </style>
+<link rel="stylesheet" href="/index.css">
 
 
 
-    <div class="max-w-6xl mx-auto bg-white p-6 rounded-lg shadow-lg">
+    <div class="max-w-7xl mx-auto bg-white p-6 rounded-lg shadow-lg">
         <header class="flex justify-between items-center mb-6">
             <div>
-                <h1 class="text-3xl font-bold text-slate-800">Set Order Times</h1>
-                <p class="text-slate-500">Set estimated completion date and time for pending stitching orders.</p>
+                <h1 class="text-3xl font-bold text-slate-800">Set Order Times &amp; Track Work</h1>
+                <p class="text-slate-500">Set completion times and track how long each task takes to improve estimates.</p>
             </div>
             <a href="Admin.html" class="text-sm font-semibold text-indigo-600 hover:text-indigo-800">← Back to Admin Panel</a>
         </header>
         
         <div class="table-container border rounded-lg">
-            <table class="w-full">
+            <table class="w-full min-w-max">
                 <thead class="bg-slate-100">
                     <tr class="border-b-2 border-slate-200">
                         <th class="p-3 text-left text-sm font-semibold text-slate-600">Order #</th>
                         <th class="p-3 text-left text-sm font-semibold text-slate-600">Customer</th>
-                        <th class="p-3 text-left text-sm font-semibold text-slate-600">Current ETA</th>
-                        <th class="p-3 text-left text-sm font-semibold text-slate-600">Set Completion Time</th>
+                        <th class="p-3 text-left text-sm font-semibold text-slate-600">Description</th>
+                        <th class="p-3 text-left text-sm font-semibold text-slate-600">Task</th>
+                        <th class="p-3 text-left text-sm font-semibold text-slate-600">Track Time</th>
+                        <th class="p-3 text-left text-sm font-semibold text-slate-600">Last Time</th>
+                        <th class="p-3 text-left text-sm font-semibold text-slate-600">Set ETA</th>
                         <th class="p-3 text-left text-sm font-semibold text-slate-600">Action</th>
                     </tr>
                 </thead>
                 <tbody id="orders-tbody">
-                    <tr><td colspan="5" class="text-center p-8 text-gray-500">Loading pending orders...</td></tr>
+                    <tr><td colspan="8" class="text-center p-8 text-gray-500">Loading pending orders...</td></tr>
                 </tbody>
             </table>
         </div>
@@ -69,6 +90,8 @@
         };
         
         let db;
+        let activeTimers = {};
+        let workLogs = {};
 
         function showToast(message) {
             const toast = document.getElementById('toast');
@@ -77,9 +100,31 @@
             setTimeout(() => toast.classList.add('hidden'), 3000);
         }
 
+        function formatMilliseconds(ms) {
+            if (ms < 0) ms = 0;
+            const totalSeconds = Math.floor(ms / 1000);
+            const minutes = Math.floor(totalSeconds / 60);
+            const seconds = totalSeconds % 60;
+            return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+        }
+
+        function updateLastTimeDisplay(orderId) {
+            const taskInput = document.getElementById(`task-name-${orderId}`);
+            const lastTimeCell = document.getElementById(`last-time-${orderId}`);
+            if (!taskInput || !lastTimeCell) return;
+
+            const taskName = taskInput.value.trim();
+            const lastLogForTask = Object.values(workLogs)
+                .filter(log => log.taskName === taskName)
+                .sort((a,b) => b.timestamp - a.timestamp)[0];
+            
+            lastTimeCell.textContent = lastLogForTask ? `${formatMilliseconds(lastLogForTask.durationMs)} min` : 'N/A';
+        }
+        window.updateLastTimeDisplay = updateLastTimeDisplay;
+
         async function fetchAndRenderOrders() {
             const tbody = document.getElementById('orders-tbody');
-            tbody.innerHTML = `<tr><td colspan="5" class="text-center p-8 text-gray-500">Loading...</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="8" class="text-center p-8 text-gray-500">Loading...</td></tr>`;
 
             const customersSnap = await db.ref('customers').once('value');
             const ordersSnap = await db.ref('orders').once('value');
@@ -87,25 +132,40 @@
             const customers = customersSnap.val() || {};
             const orders = ordersSnap.val() || {};
 
-            const pendingStitchingOrders = Object.entries(orders)
+            const pendingOrders = Object.entries(orders)
                 .map(([key, value]) => ({ id: key, ...value }))
-                .filter(o => o.status && o.status.toLowerCase() !== 'completed');
+                .filter(o => o.status && o.status.toLowerCase() !== 'completed' && o.orderNumber);
 
-            if (pendingStitchingOrders.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="5" class="text-center p-8 text-gray-500">No pending stitching orders found.</td></tr>`;
+            if (pendingOrders.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="8" class="text-center p-8 text-gray-500">No pending orders found.</td></tr>`;
                 return;
             }
 
-            tbody.innerHTML = pendingStitchingOrders
+            tbody.innerHTML = pendingOrders
                 .sort((a, b) => (a.orderNumber || 0) - (b.orderNumber || 0))
                 .map(order => {
                     const customer = Object.values(customers).find(c => c.mobile === order.customerMobile);
                     const customerName = customer ? customer.name : 'Unknown';
-                    const currentETA = order.estimatedCompletionTimestamp 
-                        ? new Date(order.estimatedCompletionTimestamp).toLocaleString()
-                        : 'Not set';
+                    
+                    let description = 'No description';
+                    if (order.type === 'stitching' && Array.isArray(order.items) && order.items.length > 0) {
+                        description = order.items.map(item => `${item.name || 'Item'} (Qty: ${item.quantity || 1})`).join(', ');
+                    } else if (order.description) {
+                        description = order.description;
+                    }
 
-                    // Format for datetime-local input: YYYY-MM-DDTHH:mm
+                    let suggestedTaskName = 'General Task';
+                    if (order.type === 'stitching' && order.items && order.items.length > 0) {
+                         suggestedTaskName = (order.items[0].name || 'Stitching Task').trim();
+                    } else if (order.type) {
+                        suggestedTaskName = order.type.charAt(0).toUpperCase() + order.type.slice(1);
+                    }
+                    
+                    const lastLogForTask = Object.values(workLogs)
+                        .filter(log => log.taskName === suggestedTaskName)
+                        .sort((a,b) => b.timestamp - a.timestamp)[0];
+                    const lastTimeTaken = lastLogForTask ? `${formatMilliseconds(lastLogForTask.durationMs)} min` : 'N/A';
+                    
                     const now = new Date();
                     const defaultValue = new Date(now.getTime() - (now.getTimezoneOffset() * 60000)).toISOString().slice(0, 16);
 
@@ -113,15 +173,80 @@
                     <tr class="border-b hover:bg-slate-50">
                         <td class="p-3 font-mono font-semibold">#${order.orderNumber}</td>
                         <td class="p-3 font-medium">${customerName} (${order.customerMobile})</td>
-                        <td class="p-3 text-sm font-semibold ${order.estimatedCompletionTimestamp ? 'text-green-600' : 'text-gray-500'}">${currentETA}</td>
+                        <td class="p-3 text-sm text-gray-600 max-w-xs truncate" title="${description}">${description}</td>
+                        <td class="p-3">
+                            <input type="text" id="task-name-${order.id}" class="task-input" value="${suggestedTaskName}" oninput="updateLastTimeDisplay('${order.id}')">
+                        </td>
+                        <td class="p-3" id="timer-cell-${order.id}">
+                            <button class="start-timer-btn bg-blue-500 text-white text-xs font-bold py-1 px-3 rounded hover:bg-blue-600" data-order-id="${order.id}" data-task-input-id="task-name-${order.id}">Start</button>
+                        </td>
+                        <td class="p-3 text-sm font-semibold text-blue-700" id="last-time-${order.id}">${lastTimeTaken}</td>
                         <td class="p-3">
                             <input type="datetime-local" id="time-input-${order.id}" class="rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 text-sm" value="${defaultValue}">
                         </td>
                         <td class="p-3">
-                             <button onclick="saveTime('${order.id}')" class="bg-indigo-600 text-white font-bold py-1 px-4 rounded-md hover:bg-indigo-700 text-sm">Save</button>
+                             <button onclick="saveTime('${order.id}')" class="bg-indigo-600 text-white font-bold py-1 px-4 rounded-md hover:bg-indigo-700 text-sm">Save ETA</button>
                         </td>
                     </tr>
                 `}).join('');
+        }
+
+        function startTimer(orderId, taskInputId) {
+            if (activeTimers[orderId]) return; // Already running
+
+            const taskName = document.getElementById(taskInputId).value.trim();
+            if (!taskName) {
+                showToast("Please enter a task name before starting the timer.");
+                return;
+            }
+
+            const timerCell = document.getElementById(`timer-cell-${orderId}`);
+            if (!timerCell) return;
+
+            const startTime = Date.now();
+            const intervalId = setInterval(() => {
+                const elapsed = Date.now() - startTime;
+                const timerDisplay = timerCell.querySelector('.timer-display');
+                if(timerDisplay) {
+                    timerDisplay.textContent = formatMilliseconds(elapsed);
+                }
+            }, 1000);
+
+            activeTimers[orderId] = { startTime, intervalId, taskName };
+            
+            timerCell.innerHTML = `
+                <div class="flex items-center gap-2">
+                    <span class="timer-display text-lg">00:00</span>
+                    <button class="stop-timer-btn bg-red-500 text-white text-xs font-bold py-1 px-3 rounded hover:bg-red-600" data-order-id="${orderId}" data-task-input-id="${taskInputId}">Stop</button>
+                </div>
+            `;
+        }
+
+        async function stopTimer(orderId, taskInputId) {
+            const timer = activeTimers[orderId];
+            if (!timer) return;
+
+            clearInterval(timer.intervalId);
+            const durationMs = Date.now() - timer.startTime;
+            const taskName = timer.taskName;
+            
+            try {
+                await db.ref('workTimeLogs').push({
+                    taskName,
+                    durationMs,
+                    timestamp: firebase.database.ServerValue.TIMESTAMP
+                });
+                showToast(`Logged ${formatMilliseconds(durationMs)} for "${taskName}"`);
+            } catch (error) {
+                showToast("Error logging time.");
+                console.error("Error saving work log:", error);
+            }
+
+            delete activeTimers[orderId];
+            const timerCell = document.getElementById(`timer-cell-${orderId}`);
+            if(timerCell) {
+                timerCell.innerHTML = `<button class="start-timer-btn bg-blue-500 text-white text-xs font-bold py-1 px-3 rounded hover:bg-blue-600" data-order-id="${orderId}" data-task-input-id="${taskInputId}">Start</button>`;
+            }
         }
 
         async function saveTime(orderId) {
@@ -140,7 +265,7 @@
                     estimatedCompletionTimestamp: timestamp
                 });
                 showToast(`Completion time saved for order #${orderId.slice(-4)}.`);
-                fetchAndRenderOrders(); // Refresh the list to show the new ETA
+                // No need to refresh, the ETA doesn't display in this table.
             } catch (error) {
                 showToast("Failed to save time. Please try again.");
                 console.error("Error saving time:", error);
@@ -152,15 +277,39 @@
             try {
                 if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
                 db = firebase.database();
+
+                db.ref('workTimeLogs').on('value', (snapshot) => {
+                    workLogs = snapshot.val() || {};
+                    if (document.getElementById('orders-tbody').querySelector('tr')) {
+                       document.querySelectorAll('input[id^="task-name-"]').forEach(input => {
+                           const orderId = input.id.replace('task-name-', '');
+                           updateLastTimeDisplay(orderId);
+                       });
+                    }
+                });
+
                 await fetchAndRenderOrders();
+
+                document.getElementById('orders-tbody').addEventListener('click', (e) => {
+                    if (e.target.classList.contains('start-timer-btn')) {
+                        const orderId = e.target.dataset.orderId;
+                        const taskInputId = e.target.dataset.taskInputId;
+                        startTimer(orderId, taskInputId);
+                    } else if (e.target.classList.contains('stop-timer-btn')) {
+                        const orderId = e.target.dataset.orderId;
+                        const taskInputId = e.target.dataset.taskInputId;
+                        stopTimer(orderId, taskInputId);
+                    }
+                });
+
             } catch (e) {
                 console.error(e);
-                document.getElementById('orders-tbody').innerHTML = `<tr><td colspan="5" class="text-center p-8 text-red-500">Failed to load data. Check Firebase connection.</td></tr>`;
+                document.getElementById('orders-tbody').innerHTML = `<tr><td colspan="8" class="text-center p-8 text-red-500">Failed to load data. Check Firebase connection.</td></tr>`;
                 alert("Firebase connection failed.");
             }
         });
     </script>
 
-
+<script type="module" src="/index.tsx"></script>
 
 <script src="./script.js"></script></body></html>
